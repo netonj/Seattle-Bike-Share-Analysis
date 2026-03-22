@@ -1,0 +1,721 @@
+---
+title: 'Neton DATA 5321 Phase 1: EDA'
+author: "Jack Neton"
+date: "2026-01-25"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+---
+
+```{r echo = FALSE}
+# Course: Statistical Machine Learning
+# Purpose: Understand how a variety of factors impact customers' use of a bike sharing service.
+# Date: Jan 25, 2026
+# Author: Jack Neton
+```
+
+```{r echo = FALSE}
+# Clear environment of variables and functions
+rm(list = ls(all = TRUE)) 
+
+# Clear environmet of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""), detach, character.only = TRUE, unload = TRUE)
+```
+
+# Load packages
+
+```{r message = FALSE}
+# The tidyverse package contains ggplot2, dplyr, and several other packages we will use
+library(tidyverse)
+
+# The gridExtra package contains grid.arrange function used to combine plots in the same window
+library(gridExtra)
+
+# The janitor package contains tidyverse functions for cross-tables
+library(janitor)
+
+# The knitr package contains some table formating functions
+library(knitr)
+
+# The GGally package contains a custom correlation plot we will use
+library(GGally)
+
+#The lubridate package contains functions to convert dates
+library(lubridate)
+
+#The colorspace package contains color pallates for graph design
+library(colorspace)
+
+#The ggthemes package contains themes for graph design
+library(ggthemes)
+
+#Rhe dpylr package helps with verbs for data manipulation
+library(dplyr)
+```
+
+# Load data
+
+```{r}
+bikes <- read.csv("bike_sharing_daily.csv")
+```
+
+# Base EDA Step 1: Prep data for analysis
+
+```{r}
+# View the data
+head(bikes)
+```
+
+**Comments**
+
++ There are mostly integer data here.
+
++ Appears tidy and ver normal.
+
++ Number of observations relatively small.
+
+## Check structure of the data
+
+```{r}
+str(bikes)
+```
+
+**Comments**
+
++ Consistent with above, mostly integer and numeric data.
+
++ Need to explore and remove NA's before proceeding with analysis. 
+
+## Clean up NA data
+
+```{r}
+sum(is.na(bikes))
+```
+
+**Comments**
+
++ No NAs detected; okay to proceed with analysis.
+
+## Create 2011 and 2012 data (training and validation sets)
+
+### 2011 Data
+
+```{r}
+bikes_2011 <- bikes %>% 
+  filter(yr==0)
+
+str(bikes_2011)
+```
+
+### 2012 Data
+
+```{r}
+bikes_2012 <- bikes %>% 
+  filter(yr==1)
+
+str(bikes_2012)
+```
+
+**Comments**
+
++ 2011 & 2012 datasets are similar in size and structure.
+
++ We are now ready to proceed with dropping variables in each set.
+
+## Modify df to only include necessary predictor variables
+
+### 2011 (training) set
+
+```{r}
+bikes_2011 <- bikes_2011 %>% 
+  select(-"instant", -"dteday", -"yr", -"casual", -"registered")
+head(bikes_2011)
+```
+
+```{r}
+str(bikes_2011)
+```
+
+### 2012 (validation) set
+
+```{r}
+bikes_2012 <- bikes_2012 %>% 
+  select(-"instant", -"dteday", -"yr", -"casual", -"registered")
+head(bikes_2012)
+```
+
+```{r}
+str(bikes_2012)
+```
+
+**Comments**
+
++ Data are now ready for analysis and fitting.
+
+# 2011 Data | EDA
+
+## Summary Statistics
+
+```{r}
+summary(bikes_2011)
+```
+
+**Comments**
+
++ Need to convert several variables into factor variables for regression models.
+
+```{r}
+bikes_2011 <- bikes_2011 %>%
+  mutate(
+    season = factor(season),
+    mnth = factor(mnth),
+    holiday = factor(holiday),
+    weekday = factor(weekday),
+    workingday = factor(workingday),
+    weathersit = factor(weathersit)
+  )
+
+summary(bikes_2011)
+```
+
+**Comments**
+
++ Categorical predictors were converted to factors to ensure appropriate treatment in subsequent regression models.
+
++ Temp and apparent temp show wide variation across the year, with similar centers and spreads.
+
++ Humidity is generally high and moderately variable; alternatively, windspeed shows a narrower distribution with fewer extreme values.
+
++ Daily bike counts vary substantially, anywhere from 431 to 6043.
+
+### Numerical Graphical Analysis
+
+```{r}
+# temp
+par(mfrow = c(1,2))
+hist(bikes_2011$temp, main = "temp: Histogram", xlab = "temp")
+qqnorm(bikes_2011$temp, main = "temp: Normal Q-Q Plot"); qqline(bikes_2011$temp)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Histogram | The histogram shows a relatively even spread of temperature values across the range, with no extreme skewness or isolated outliers.
+
++ Q-Q Plot | The Q-Q plot follows the reference line in the middle but departs in the tails, indicating mild deviations from normality at higher and lower temperatures.
+
+```{r}
+# atemp
+par(mfrow = c(1,2))
+hist(bikes_2011$atemp, main = "atemp: Histogram", xlab = "atemp")
+qqnorm(bikes_2011$atemp, main = "atemp: Normal Q-Q Plot"); qqline(bikes_2011$atemp)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Similar to temp.
+
++ Histogram | The histogram shows a fairly symmetric distribution of apparent temperature values with most observations concentrated in the mid-range.
+
++ Q-Q Plot | The Q–Q plot aligns closely with the reference line in the center but shows mild deviations in the tails, indicating slight departures from normality.
+
+```{r}
+# hum
+par(mfrow = c(1,2))
+hist(bikes_2011$hum, main = "hum: Histogram", xlab = "hum")
+qqnorm(bikes_2011$hum, main = "hum: Normal Q-Q Plot"); qqline(bikes_2011$hum)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Histogram | The histogram shows humidity values concentrated at moderate to high levels, with relatively few very low-humidity days.
+
++ Q-Q Plot | The Q–Q plot displays noticeable deviations from the reference line, particularly in the lower tail, indicating that the humidity distribution departs from normality.
+
+```{r}
+# windspeed
+par(mfrow = c(1,2))
+hist(bikes_2011$windspeed, main = "windspeed: Histogram", xlab = "windspeed")
+qqnorm(bikes_2011$windspeed, main = "windspeed: Normal Q-Q Plot"); qqline(bikes_2011$windspeed)
+par(mfrow = c(1,1))
+```
+
+**Comments** 
+
++ Histogram | The histogram shows a right-skewed distribution, with most days experiencing low to moderate wind speeds and relatively few high-wind observations.
+
++ Q-Q Plot | The Q–Q plot shows clear departures from the reference line, particularly in the upper tail, indicating that windspeed is not normally distributed.
+
+```{r}
+# cnt
+par(mfrow = c(1,2))
+hist(bikes_2011$cnt, main = "cnt: Histogram", xlab = "cnt")
+qqnorm(bikes_2011$cnt, main = "cnt: Normal Q-Q Plot"); qqline(bikes_2011$cnt)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Histogram | The histogram shows a right-skewed distribution of daily bike counts, with most days having moderate usage and fewer days with very high counts.
+
++ Q-Q Plot | The Q–Q plot exhibits substantial departures from the reference line, particularly in the upper tail, indicating that daily bike counts are not normally distributed.
+
+**Overall**
+
++ Temperature and apparent temperature are approximately summetric and close to normally distributed
+  - This suggests they are well-behaved continuous predictors and likely suitable for use in linear regression models without transformation.
+  
++ Humidity and windspeed echibit noticeable departures from normality, indicating that their effects on daily bike counts may be nonlinear or require careful intepretation in regression analyses.
+
++ Daily bike counts show substantial right skew and variability, suggesting that extreme high-usage days occur.
+  - Evaluate model assumptions related to normal erros carefully when predicting bike usage.
+  
+### Categorical (Factor) Graphical Analysis
+
+```{r}
+# season: bar chart + boxplot of cnt by season
+par(mfrow = c(1,2))
+barplot(table(bikes_2011$season), main = "season: Counts", xlab = "season", ylab = "Frequency")
+boxplot(cnt ~ season, data = bikes_2011, main = "cnt by season", xlab = "season", ylab = "cnt")
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Bar | The bar chart shows that observations are fairly evenly distributed across the four seasons, indicating no major imbalance in seasonal representation.
+
++ Boxplot | The boxplot shows that bike usage is lowest in spring, increases substantially in summer and fall, and then declines in winter, with fall having the highest median daily counts.
+
+```{r}
+# mnth: bar chart + boxplot of cnt by month
+par(mfrow = c(1,2))
+barplot(table(bikes_2011$mnth), main = "mnth: Counts", xlab = "mnth", ylab = "Frequency")
+boxplot(cnt ~ mnth, data = bikes_2011, main = "cnt by mnth", xlab = "mnth", ylab = "cnt")
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Bar | The bar chart shows that the number of observations is evenly distributed across months, indicating consistent data coverage throughout the year.
+
++ Box | The boxplot shows a clear seasonal pattern, with bike usage increasing from winter into summer, peaking in mid-year months, and declining again toward the end of the year.
+
+```{r}
+# holiday: bar chart + boxplot of cnt by holiday
+par(mfrow = c(1,2))
+barplot(table(bikes_2011$holiday), main = "holiday: Counts", xlab = "holiday", ylab = "Frequency")
+boxplot(cnt ~ holiday, data = bikes_2011, main = "cnt by holiday", xlab = "holiday", ylab = "cnt")
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Bar | The bar chart shows that the vast majority of observations occur on non-holidays, with holidays representing only a small portion of the data.
+
++ Box | The boxplot suggests that median bike usage is slightly lower on holidays compared to non-holidays, though there is substantial overlap in usage levels.
+
+```{r}
+# weekday: bar chart + boxplot of cnt by weekday
+par(mfrow = c(1,2))
+barplot(table(bikes_2011$weekday), main = "weekday: Counts", xlab = "weekday", ylab = "Frequency")
+boxplot(cnt ~ weekday, data = bikes_2011, main = "cnt by weekday", xlab = "weekday", ylab = "cnt")
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Bar | The bar chart shows that observations are evenly distributed across weekdays, indicating balanced coverage for each day of the week.
+
++ Box | The boxplot shows relatively similar median bike usage across weekdays, with only modest variation and no strong weekday-specific pattern.
+
+```{r}
+# workingday: bar chart + boxplot of cnt by workingday
+par(mfrow = c(1,2))
+barplot(table(bikes_2011$workingday), main = "workingday: Counts", xlab = "workingday", ylab = "Frequency")
+boxplot(cnt ~ workingday, data = bikes_2011, main = "cnt by workingday", xlab = "workingday", ylab = "cnt")
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Bar | The bar chart shows that there are more working days than non-working days in the data, reflecting the typical structure of the calendar year.
+
++ Box | The boxplot indicates that median bike usage is slightly higher on working days compared to non-working days, though the overall distributions overlap considerably.
+
+```{r}
+# weathersit: bar chart + boxplot of cnt by weathersit
+par(mfrow = c(1,2))
+barplot(table(bikes_2011$weathersit), main = "weathersit: Counts", xlab = "weathersit", ylab = "Frequency")
+boxplot(cnt ~ weathersit, data = bikes_2011, main = "cnt by weathersit", xlab = "weathersit", ylab = "cnt")
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Bar | The bar chart shows that most days fall under clear or mildly cloudy conditions, with relatively few days experiencing more severe weather.
+
++ Box | The boxplot shows a clear decreasing trend in bike usage as weather conditions worsen, with the highest usage under clear conditions and the lowest usage during adverse weather.
+
+**Overall Conclusions**
+
++ Seasonality is a major driver of bike usage, with clear increases in daily counts during summer and fall and lower usage in spring and winter, as seen across both seasonal and monthly patterns.
+
++ Calendar effects such as holidays, weekdays, and working days show relatively modest differences in bike usage, suggesting that while these factors matter, they are less influential than seasonal and weather-related variables.
+
++ Weather conditions have a strong and consistent impact on bike usage, with bike counts decreasing substantially as weather worsens, indicating that weather-related predictors are likely to be important contributors in regression models.
+
+# **Individual Regression Models | 2011 Data**
+
+## Numerical data regression models
+
+```{r}
+m_temp <- lm(cnt ~ temp, data = bikes_2011)
+summary(m_temp)
+
+par(mfrow = c(2,2))
+plot(m_temp)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Temperature is a strong predictor of daily bike counts, explaining approximately 59% of the variability in usage, with a highly significant positive relationship indicating increased bike use as temperature rises.
+
++ Assumptions | Residual diagnostics suggest mild nonlinearity and heteroscedasticity at higher fitted values, and the Q–Q plot shows deviations in the tails, indicating departures from normality; however, no influential leverage points are evident, and the model is reasonable for exploratory analysis. 
+
+```{r}
+m_atemp <- lm(cnt ~ atemp, data = bikes_2011)
+summary(m_atemp)
+
+par(mfrow = c(2,2))
+plot(m_atemp)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Apparent temperature is a strong predictor of daily bike counts, explaining about 60% of the variability in usage, with a highly significant positive relationship indicating increased ridership as perceived temperature rises.
+
++ Assumptions | Residual plots show mild nonlinearity and heteroscedasticity at higher fitted values, and the Q–Q plot indicates tail departures from normality; however, no extreme leverage or influential points are evident, making the model appropriate for exploratory purposes.
+
+```{r}
+m_hum <- lm(cnt ~ hum, data = bikes_2011)
+summary(m_hum)
+
+par(mfrow = c(2,2))
+plot(m_hum)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Humidity shows no meaningful linear relationship with daily bike counts, explaining virtually none of the variability in usage, and the slope is not statistically significant.
+
++ Assumptions | Residual diagnostics reveal clear nonlinearity and heteroscedasticity, and the Q–Q plot shows substantial departures from normality, indicating that a simple linear model is not appropriate for capturing the effect of humidity alone.
+
+```{r}
+m_wind <- lm(cnt ~ windspeed, data = bikes_2011)
+summary(m_wind)
+
+par(mfrow = c(2,2))
+plot(m_wind)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Windspeed has a statistically significant negative association with daily bike counts, but explains only a small portion of the variability in usage, indicating a weak standalone effect.
+
++ Assumptions | Residual plots show heteroscedasticity and departures from normality, particularly in the tails, suggesting that the linear regression assumptions are only partially satisfied.
+
+## Categorical data regression models
+
+```{r}
+m_season <- lm(cnt ~ season, data = bikes_2011)
+summary(m_season)
+
+par(mfrow = c(2,2))
+plot(m_season)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Season explains a large portion of the variability in daily bike counts, with significantly higher usage in summer, fall, and winter relative to spring, and an overall strong model fit.
+
++ Assumptions | Residual plots show clustering due to the categorical nature of the predictor and mild heteroscedasticity, while the Q–Q plot indicates tail departures from normality; however, no influential leverage points are present, and the model is appropriate for capturing seasonal differences.
+
+```{r}
+m_mnth <- lm(cnt ~ mnth, data = bikes_2011)
+summary(m_mnth)
+
+par(mfrow = c(2,2))
+plot(m_mnth)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Month explains a large portion of the variability in daily bike counts, with strong and statistically significant increases in usage from winter into summer months, resulting in a high overall model fit.
+
++ Assumptions | Residual diagnostics show clustering due to the categorical structure of the predictor and mild heteroscedasticity, while the Q–Q plot indicates tail deviations from normality; nevertheless, no influential leverage points are evident, and the model is appropriate for exploratory analysis.
+
+```{r}
+m_holiday <- lm(cnt ~ holiday, data = bikes_2011)
+summary(m_holiday)
+
+par(mfrow = c(2,2))
+plot(m_holiday)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Holiday status does not provide a meaningful explanation of variation in daily bike counts, with a non-significant coefficient and an extremely low R² indicating a weak standalone effect.
+
++ Assumptions | Residual diagnostics show substantial overlap between holiday and non-holiday days and departures from normality, but given the poor model fit, violations of regression assumptions are less consequential for this predictor.
+
+```{r}
+m_weekday <- lm(cnt ~ weekday, data = bikes_2011)
+summary(m_weekday)
+
+par(mfrow = c(2,2))
+plot(m_weekday)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Weekday does not meaningfully explain variation in daily bike counts, as none of the weekday indicators are statistically significant and the model explains essentially none of the variability in usage.
+
++ Assumptions | Residual plots show clustering due to the categorical structure and departures from normality, but given the extremely weak model fit, violations of regression assumptions are not substantively important for this predictor.
+
+```{r}
+m_workingday <- lm(cnt ~ workingday, data = bikes_2011)
+summary(m_workingday)
+
+par(mfrow = c(2,2))
+plot(m_workingday)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Working day status does not meaningfully explain variation in daily bike counts, with a non-significant coefficient and essentially zero explanatory power.
+
++ Assumptions | Residual diagnostics show clear clustering and departures from normality, but given the lack of explanatory strength, violations of regression assumptions are not substantively important for this model.
+
+```{r}
+m_weather <- lm(cnt ~ weathersit, data = bikes_2011)
+summary(m_weather)
+
+par(mfrow = c(2,2))
+plot(m_weather)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Model fit | Weather situation is a statistically significant predictor of daily bike counts, with substantial decreases in usage under misty and adverse weather conditions compared to clear days, though the model explains a moderate portion of the overall variability.
+
++ Assumptions | Residual diagnostics show clustering due to the categorical predictor and departures from normality, but no influential leverage points are evident, making the model appropriate for exploratory analysis.
+
+**Overall Conclusions**
+
++ Acorss single-predictor models, temperature-related variables and seasonal indicators provide the strongest individual explanations of daily bike usage.
+
++ Calendar-based variables offer little standalone explanatory power.
+
++ Weather conditions show negative association with bike usage - particularly under adverse conditions.
+
++ Residual diagnostics suggest that multiple predictors will be needed to adequately capture the observed variability. 
+
+# **Multi-variable Regression models | 2011 data**
+
+## Temperature & Weather conditions
+
+```{r}
+m_temp_weather <- lm(cnt ~ temp * weathersit, data = bikes_2011)
+summary(m_temp_weather)
+
+par(mfrow = c(2,2))
+plot(m_temp_weather)
+par(mfrow = c(1,1))
+```
+**Comments**
+
++ Temperature and weather conditions were both strong predictors individually; it is reasonable to expect that the effect of temperature on bike usage may differ under varying weather conditions.
+
++ The interaction between temperature and weather conditions are not significant, providing little evidnce that the relationship between temperature and bike usage differs meaningfully across weather categories.
+
++ The model explains a large portion of the variability in daily bike counts and improves fit relative to single-predictor models
+  - Residual diagnostics indicate mild heteroscedasticity and departures from normality at higher fitted values, consistent with earlier models.
+
+## Temperature and season
+
+```{r}
+m_temp_season <- lm(cnt ~ temp * season, data = bikes_2011)
+summary(m_temp_season)
+
+par(mfrow = c(2,2))
+plot(m_temp_season)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Temperature is a strong predictor of bike usage; its effect is expected to vary across seasons due to differences in seasonal behavior.
+
++ The interaction terms between temperature and season are statistically significant for summer and fall, indicating that the effect of temperature on bike usage differs meaningfully across seasons, with temperature having a stronger positive association during these periods.
+
++ Residual diagnostics indicate mild heteroscedasticity and departures from normality that persist even after including the interation term.
+  - No influential leverage points are present.
+  - Model remains appropriate for exploratory analysis.
+
+## Weather conditions and working day
+
+```{r}
+m_weather_work <- lm(cnt ~ weathersit * workingday, data = bikes_2011)
+summary(m_weather_work)
+
+par(mfrow = c(2,2))
+plot(m_weather_work)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ Weather conditions were expected to affect commuting behavior differently on working days compared to non-working days, potentially altering daily bike usage patterns.
+
++ The interaction terms between weather and work day are not statistically significant, despite the significance of weather independently.
+
++ The model explains a modest portion of the variability in daily bike counts, and residual diagnostics show heteroscedasticity and departures from normality.
+
+**Overall Conclusion**
+
++ Among the interaction models considered, the interaction between temperature and season provides the strongest evidence of effect modification, indicating the influence of temperature on bike usage across seasons.
+
++ Conversely, interactions involving weather condition with temperature and working day do not show meaningful interaction effects.
+
+# **Backward Selection**
+
+## Full model
+
+```{r}
+m_full <- lm(
+  cnt ~ temp + atemp + hum + windspeed +
+        season + mnth + holiday + weekday + workingday + weathersit +
+        temp:weathersit + temp:season + weathersit:workingday,
+  data = bikes_2011
+)
+
+summary(m_full)
+```
+
+## AIC
+
+```{r}
+m_final <- step(m_full, direction = "backward", trace = FALSE)
+
+summary(m_final)
+```
+
+### Model diagnostics
+
+```{r}
+par(mfrow = c(2,2))
+plot(m_final)
+par(mfrow = c(1,1))
+```
+
+**Comments**
+
++ The final model explains a large proportion in variability (Adj r-squared ~0.86)
+
++ Temperature is the strongest positive predictor of bike usage.
+
++ Higher humidity and windspeed are associated with lower daily bike counts.
+
++ Seasonal and monthly indicators capture strong temporal patterns beyond daily weather effects.
+
++ Interaction terms show that the effect of temperature varies by season and weather condition.
+  - Particularuly, the postiive effect of temperature is reduced during fall and under adverse weather conditions.
+  
++ Calendar-based variables such as holidays and weekdays do not contirbute meaninfully once weather and seaosnality are included.
+
++ Residual diagnostics indicate mild heteroscedasticity and departures from normality, but no influential leverage points.
+
++ The final model is appropriate for EDA and provides a strong basis for prediction.
+
+# **Model Application | 2012 Data**
+
+```{r}
+# mutate factor variables based on 2011 levels
+bikes_2012 <- bikes_2012 %>%
+  mutate(
+    season = factor(season, levels = levels(bikes_2011$season)),
+    mnth = factor(mnth, levels = levels(bikes_2011$mnth)),
+    holiday = factor(holiday, levels = levels(bikes_2011$holiday)),
+    weekday = factor(weekday, levels = levels(bikes_2011$weekday)),
+    workingday = factor(workingday, levels = levels(bikes_2011$workingday)),
+    weathersit = factor(weathersit, levels = levels(bikes_2011$weathersit))
+  )
+
+summary(bikes_2012)
+```
+
+## Predict on 2012 using final 2011 model
+
+```{r}
+# predict on 2012 using final 2011 model
+pred_2012 <- predict(m_final, newdata = bikes_2012)
+
+# performance metrics
+rmse_2012 <- sqrt(mean((bikes_2012$cnt - pred_2012)^2))
+mae_2012  <- mean(abs(bikes_2012$cnt - pred_2012))
+r2_2012   <- 1 - sum((bikes_2012$cnt - pred_2012)^2) /
+  sum((bikes_2012$cnt - mean(bikes_2012$cnt))^2)
+
+c(RMSE = rmse_2012, MAE = mae_2012, R2 = r2_2012)
+```
+
+```{r}
+summary(pred_2012)
+```
+
+
+```{r}
+plot(bikes_2012$cnt, pred_2012,
+     xlab = "Observed cnt (2012)",
+     ylab = "Predicted cnt (2012)",
+     main = "Observed vs Predicted (2012)")
+abline(0, 1, col = "red")
+```
+
+**Comments**
+
++ The final model performs poorly when applied to the 2012 data, with a negative out-of-sample r-squared.
+
++ Predictive accuracy is lower than a baseline mean-only model, indicating limited ability to provide conclusions.
+
++ Observed vs predicted values show a positive trend but substantial scatter around the line.
+
++ Prediction errors increase at higher daily bike counts.
+
++ Results suggest overfitting to 2011 patterns and possible effects not captured by the model.
+
++ THe model is more suitable for explanatory analysis rather than prediction across years.
+
+**Overall Conclusion**
+
++ Although the final model explains a large proportion of variation in the training data, its poor out-of-sample performance highlights the challenges of generalizing bike usage patterns across years.
+
+
+
+
+
