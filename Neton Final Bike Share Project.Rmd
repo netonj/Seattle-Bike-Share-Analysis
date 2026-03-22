@@ -1,0 +1,815 @@
+---
+title: 'Neton DATA 5321 Phase 2: Final Model Selection'
+author: "Jack Neton"
+date: "2026-03-08"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+---
+
+```{r, echo = FALSE}
+# Course: Statistical Machine Learning
+# Purpose: Understand how a variety of factors impact customers' use of a bike sharing service.
+# Date: Mar 8, 2026
+# Author: Jack Neton
+```
+
+```{r, echo = FALSE}
+# Clear environment of variables and functions
+rm(list = ls(all = TRUE)) 
+
+# Clear environmet of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""), detach, character.only = TRUE, unload = TRUE)
+```
+
+# Load packages
+
+```{r setup, message = FALSE, warning = FALSE}
+# The tidyverse package contains ggplot2, dplyr, and several other packages we will use
+library(tidyverse)
+
+# The gridExtra package contains grid.arrange function used to combine plots in the same window
+library(gridExtra)
+
+# The janitor package contains tidyverse functions for cross-tables
+library(janitor)
+
+# The knitr package contains some table formatting functions
+library(knitr)
+
+# The GGally package contains a custom correlation plot we will use
+library(GGally)
+
+#The lubridate package contains functions to convert dates
+library(lubridate)
+
+#The colorspace package contains color palettes for graph design
+library(colorspace)
+
+#The ggthemes package contains themes for graph design
+library(ggthemes)
+```
+
+# Load modeling packages
+
+```{r modeling_packages, message = FALSE, warning = FALSE}
+# The glmnet package fits generalized linear models using Lasso or elastic-net regularization
+library(glmnet)
+
+# The pls package implements PLS regression and PCR
+library(pls)
+
+# The mgcv package is a comprehensive package for fitting GAMs and GAMMs
+library(mgcv)
+```
+
+# Load data
+
+```{r}
+bikes <- read.csv("bike_sharing_daily.csv")
+```
+
+```{r}
+str(bikes)
+```
+
+**Comments**
+
++ We know from Project Phase 1 that there are no NAs and, therefore, we are clear to proceed with analysis.
+
+# Filter data for necessary variables
+
+```{r}
+bikes <- bikes %>%
+  select(
+    season, mnth, holiday, weekday, workingday,
+    weathersit, temp, atemp, hum, windspeed, cnt, yr  )
+```
+
+```{r}
+glimpse(bikes)
+```
+
+**Comments**
+
++ We now have a bikes data set only containing the required predictor variables, and count (for modeling) and year (for splitting data)
+
+# Create training and test sets
+
+## Split data
+
+```{r}
+bikes_2011 <- bikes %>% 
+  filter(yr==0)
+
+bikes_2012 <- bikes %>% 
+  filter(yr==1)
+```
+
+```{r}
+str(bikes_2011)
+```
+
+```{r}
+str(bikes_2012)
+```
+
+**Comments**
+
++ Relatively even split between 2011 and 2012 data.
++ Need to convert int values to factors before analysis, and drop yr from each set.
+
+## Convert categorial variables from int to factor
+
+```{r}
+# 2011
+bikes_2011 <- bikes_2011 %>%
+  mutate(
+    season = factor(season),
+    mnth = factor(mnth),
+    holiday = factor(holiday),
+    weekday = factor(weekday),
+    workingday = factor(workingday),
+    weathersit = factor(weathersit)
+  )
+```
+
+
+```{r}
+# 2012
+bikes_2012 <- bikes_2012 %>%
+  mutate(
+    season = factor(season, levels = levels(bikes_2011$season)),
+    mnth = factor(mnth, levels = levels(bikes_2011$mnth)),
+    holiday = factor(holiday, levels = levels(bikes_2011$holiday)),
+    weekday = factor(weekday, levels = levels(bikes_2011$weekday)),
+    workingday = factor(workingday, levels = levels(bikes_2011$workingday)),
+    weathersit = factor(weathersit, levels = levels(bikes_2011$weathersit))
+  )
+```
+
+```{r}
+# check structures
+str(bikes_2011)
+```
+
+```{r}
+str(bikes_2012)
+```
+
+**Comments**
+
++ Categorical data are now factor variables with the proper amount of levels.
++ Still need to drop yr.
+
+## Drop yr variable
+
+```{r}
+bikes_2011 <- bikes_2011 %>% select(-yr)
+bikes_2012 <- bikes_2012 %>% select(-yr)
+```
+
+```{r}
+str(bikes_2011)
+```
+
+```{r}
+str(bikes_2012)
+```
+
+**Comments**
+
++ We are now done splitting, cleaning, and mutating the data for our modeling.
+
+# Check correlation between variables
+
+```{r}
+cor(bikes_2011 %>%
+      select(temp, atemp, hum, windspeed))
+```
+
+**Comments**
+
++ Temp and apparent temp are extremely highly correlated, suggesting multicollinearity between these predictors
+  - This notion of multicollinearity motivates the use of regualarization or dimension-reduction models.
++ Humidity shows only a weak positive correlation with temp and atemp indicating that is is likley independent in the model.
++ Windspeed is weakly negatively correlated with the other weather variables, suggesting that is represents a largely separate weather effect on bike usage.
+
+# Modeling
+
+## Ridge Regression
+
+```{r}
+# create design matrix (required by glmnet)
+x_train <- model.matrix(
+  cnt ~ season + mnth + holiday + weekday + workingday +
+    weathersit + temp + atemp + hum + windspeed,
+  data = bikes_2011
+)[, -1]
+
+y_train <- bikes_2011$cnt
+```
+
+```{r}
+# cross-validation to choose lambda
+set.seed(1)
+
+ridge_cv <- cv.glmnet(
+  x_train,
+  y_train,
+  alpha = 0
+)
+```
+
+
+```{r}
+# Extract CV results
+ridge_df <- data.frame(
+  log_lambda = log(ridge_cv$lambda),
+  mse = ridge_cv$cvm
+)
+
+ggplot(ridge_df, aes(x = log_lambda, y = mse)) +
+  geom_line(color = "#E3120B", size = 1) +
+  geom_vline(xintercept = log(ridge_cv$lambda.min), linetype = "dashed") +
+  geom_vline(xintercept = log(ridge_cv$lambda.1se), linetype = "dotted") +
+  labs(
+    title = "Ridge Regression Cross-Validation",
+    x = "Log(Lambda)",
+    y = "Mean Squared Error"
+  ) + theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist() 
+
+```
+
+```{r}
+# best lambda
+ridge_cv$lambda.min
+```
+
+```{r}
+# fit final ridge model
+ridge_model <- glmnet(
+  x_train,
+  y_train,
+  alpha = 0,
+  lambda = ridge_cv$lambda.min
+)
+
+coef(ridge_model)
+```
+
+
+**Comments**
+
++ The CV plot shows MSE across different values of the penalty parameter lambda.
+  - The optimal model was chosen at the value of lambda that minimizes the CV MSE to balance model complexity and predictive accuracy (106.7474).
++ The ridge regression coefficients indicate that temp and atemp have the strongest positive relationships with daily bike counts.
+  - Humidity, windspeed, and poorer weather are associated with lower usage.
++ Ridge regression shrinks coefficients without eliminating predictors; all variables remain in the model.
+  - This helps stabilize estimates in the presence of multicollinearity (particulary between temp and atemp, as discussed above).
+
+**Overall**: The model fit appears reasonable, as ridge regression reduces variance caused by highly correlated predictors while retaining all available information from the predictors. This makes it well suites for this dataset, where several weather variables are correlated.
+
+## Lasso Regression
+
+```{r}
+# model setup, alpha = 1
+set.seed(1)
+
+lasso_cv <- cv.glmnet(
+  x_train,
+  y_train,
+  alpha = 1
+)
+```
+
+
+```{r}
+# extract CV data
+lasso_df <- data.frame(
+  log_lambda = log(lasso_cv$lambda),
+  mse = lasso_cv$cvm
+)
+
+# plot
+ggplot(lasso_df, aes(x = log_lambda, y = mse)) +
+  geom_line(color = "#E3120B", size = 1) +
+  geom_vline(xintercept = log(lasso_cv$lambda.min), linetype = "dashed") +
+  geom_vline(xintercept = log(lasso_cv$lambda.1se), linetype = "dotted") +
+  labs(
+    title = "Lasso Regression Cross-Validation",
+    x = "Log(Lambda)",
+    y = "Mean Squared Error"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist()
+```
+
+```{r}
+# choose best lambda
+lasso_cv$lambda.min
+```
+
+```{r}
+# fit final model
+lasso_model <- glmnet(
+  x_train,
+  y_train,
+  alpha = 1,
+  lambda = lasso_cv$lambda.min
+)
+
+coef(lasso_model)
+```
+
+**Comments**
+
++ The CV plot shows the MSE across values of the penalty parameter lambda.
+   - The optimal model was chosen at the value of lambda that minimizes the CV MSE to balance model complexity and predictive accuracy (10.18955).
+   
++ Unlike ridge regression, the lasso performs variable selection by shrinking some coefficients exactly to zero.
+
++ In this model, several predictors were eliminated, indicating that they provide little to no additional predictive value once other variables are included. 
+
++ Temperature remains the strongest positive predictor of bike usage, while humidity, windspeed, and adverse weather conditions are associated with lower counts.
+
+**Overall:** The lasso model provides a more parsimonious model than ridge regression by retaining only the mose relevant predictors while removing weaker effects. This improves interpretability while still maintaining good predictive performance.
+
+## PCR
+
+```{r}
+# Fit the PCR model
+set.seed(1)
+
+pcr_model <- pcr(
+  cnt ~ season + mnth + holiday + weekday + workingday +
+    weathersit + temp + atemp + hum + windspeed,
+  data = bikes_2011,
+  scale = TRUE,
+  validation = "CV"
+)
+```
+
+```{r}
+summary(pcr_model)
+```
+
+```{r}
+# choose number of components
+
+# Extract cross-validation MSEP values
+pcr_msep <- drop(pcr_model$validation$PRESS)
+pcr_ncomp <- 0:(length(pcr_msep) - 1)
+
+pcr_df <- data.frame(
+  ncomp = pcr_ncomp,
+  mse = pcr_msep / nrow(pcr_model$model)
+)
+
+ggplot(pcr_df, aes(x = ncomp, y = mse)) +
+  geom_line(color = "#E3120B", size = 1) +
+  labs(
+    title = "PCR Cross-Validation (MSEP)",
+    x = "Number of Components",
+    y = "Mean Squared Error"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist()
+```
+
+**Comments**
+
++ PCR was fit using principal components of the predictor variables, and CV was used to determine the optimal number of components.
+
++ The validation plot shows that the cross-validated MSE decreases substantially as components are added and reaches its lowest values when a large number of components are included.
+  - This indicates that many components contribute useful predictive information.
+  
++ Based on CV results, models with roughly mid-to-high range of components provide the best predictive performance.
+
++ The training summary shows that the first few components capture a large portion of the variance in the predictors, while the explained variance in the response variable increases steadily as additional components are added.
+
+**Overall:** The PCR model provides a reasonable fit by reducing the dimensionality of the predictor space while still retaining most of the relevant information. However, beacause many components are required to minimize prediction error, the dimenstionality reduction benefits are somewhat limited compared with other regularization approaches.
+
+## PLS
+
+```{r}
+# fit the PLS model
+set.seed(1)
+
+pls_model <- plsr(
+  cnt ~ season + mnth + holiday + weekday + workingday +
+    weathersit + temp + atemp + hum + windspeed,
+  data = bikes_2011,
+  scale = TRUE,
+  validation = "CV"
+)
+```
+
+```{r}
+summary(pls_model)
+```
+
+```{r}
+# choose number of components
+pls_msep_obj <- MSEP(pls_model)
+pls_msep <- drop(pls_msep_obj$val[1, 1, ])
+
+pls_df <- data.frame(
+  ncomp = 0:(length(pls_msep) - 1),
+  mse = pls_msep
+)
+
+ggplot(pls_df, aes(x = ncomp, y = mse)) +
+  geom_line(color = "#E3120B", size = 1) +
+  labs(
+    title = "PLS Cross-Validation (MSEP)",
+    x = "Number of Components",
+    y = "Mean Squared Error"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist()
+```
+
+**Comments**
+
++ PLS regression was fit using cross-validation to determine the optimal number of components.
+
++ The validation plot shows that the cross-validated mean squared prediction error decreases sharply as the first few components are added, with the largest improvements occurring within the first several components before leveling off.
+
++ Based on the cross-validation results, a relatively small number of components provides strong predictive performance.
+
++ The model captures a large proportion of the variation in the response variable early on, with the first few components explaining over 80% of the variance in daily bike counts.
+
+**Overall:** The PLS model provides a strong fit by constructing components that maximize covariance between the predictors and the response variable. This allows the model to achieve good predictive accuracy with fewer components than PCR, making it an efficient approach for handling correlated predictors such as temp or atemp.
+
+## GAM with nonlinear components
+
+**Pre-modeling comments**
++ Based on Phase 1 work, the best nonlinear components are temp, hum and windspeed.
+  - atemp is almost perfectly correlated with temp, so dropping atemp in favor of temp.
+  
+```{r}
+gam_model <- gam(
+  cnt ~ season + mnth + holiday + weekday + workingday + weathersit +
+    s(temp) + s(hum) + s(windspeed),
+  data = bikes_2011,
+  method = "REML"
+)
+
+summary(gam_model)
+```
+
+```{r}
+# Get smooth term names
+smooth_terms <- sapply(gam_model$smooth, function(x) x$term)
+
+plot_list <- list()
+
+for (term in smooth_terms) {
+  
+  x_seq <- seq(
+    min(gam_model$model[[term]]),
+    max(gam_model$model[[term]]),
+    length.out = 100
+  )
+  
+  new_data <- gam_model$model[rep(1, 100), ]
+  new_data[[term]] <- x_seq
+  
+  preds <- predict(gam_model, newdata = new_data, se.fit = TRUE)
+  
+  df <- data.frame(
+    x = x_seq,
+    fit = preds$fit,
+    upper = preds$fit + 2 * preds$se.fit,
+    lower = preds$fit - 2 * preds$se.fit
+  )
+  
+  p <- ggplot(df, aes(x = x, y = fit)) +
+    geom_line(color = "#E3120B", size = 1) +
+    geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2) +
+    labs(
+      title = paste("Smooth Effect of", term),
+      x = term,
+      y = "Partial Effect"
+    ) +
+    theme(
+      plot.title = element_text(face = "bold"),
+      axis.title = element_text(size = 10)
+    ) +
+    theme_economist()
+  
+  plot_list[[term]] <- p
+}
+
+plot_list
+```
+
+
+```{r}
+# plot and check gam model
+gam_diag <- data.frame(
+  fitted = fitted(gam_model),
+  residuals = residuals(gam_model)
+)
+
+ggplot(gam_diag, aes(x = fitted, y = residuals)) +
+  geom_point(color = "#E3120B", alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Residuals vs Fitted",
+    x = "Fitted Values",
+    y = "Residuals"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist()
+
+# q-q plot
+qq <- qqnorm(residuals(gam_model), plot.it = FALSE)
+
+qq_df <- data.frame(
+  theoretical = qq$x,
+  sample = qq$y
+)
+
+ggplot(qq_df, aes(x = theoretical, y = sample)) +
+  geom_point(color = "#E3120B", alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    title = "Normal Q-Q Plot",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist()
+
+# scale-location
+ggplot(gam_diag, aes(x = fitted, y = sqrt(abs(residuals)))) +
+  geom_point(color = "#E3120B", alpha = 0.7) +
+  labs(
+    title = "Scale-Location",
+    x = "Fitted Values",
+    y = "Sqrt(|Residuals|)"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist()
+```
+
+
+**Comments**
+
++ A generalized additive model (GAM) was fit using the 2011 data to allow for nonlinear relationships between bike usage and the continuous weather variables. Smooth terms were included for temperature (temp), humidity (hum), and windspeed (windspeed), while the remaining predictors were included as categorical parametric terms
+
++ The GAM explains a large portion of the variability in daily bike counts. The model achieved an adjusted R-squared of 0.881 and 89.3% deviance explained, indicating strong predictive performance on the training data.
+
++ Several categorical predictors were statistically significant.
+  - Bike usage was significantly higher in summer and fall seasons, and certain months such as May, June, July, and September showed higher counts relative to January.
+  - Weather conditions also played an important role, with weathersit2 and weathersit3 associated with significantly lower ridership, reflecting the negative impact of poorer weather conditions.
+  
++ The smooth terms for temperature, humidity, and windspeed were all highly significant (p < 0.001), indicating that these variables influence bike usage in nonlinear ways.
+
++ The estimated degrees of freedom (edf) for the smooth terms were 6.18 for temperature, 4.36 for humidity, and 3.55 for windspeed, confirming that these relationships are meaningfully nonlinear.
+
++ The smooth plots reveal clear patterns:
+  - Temperature: Ridership increases as temperature rises to moderate levels, then begins to level off and slightly decline at the highest temperatures. This suggests that moderate warmth encourages biking, while extreme heat may reduce usage.
+  - Humidity: Higher humidity is associated with decreasing ridership, particularly at very humid levels.
+  - Windspeed: Increasing windspeed corresponds to lower bike usage, with a gradual downward trend as winds become stronger.
+
++ Model diagnostics indicate that the GAM assumptions are reasonably satisfied.
+  - The QQ plot of deviance residuals shows approximate normality with only minor deviations in the tails.
+  - The residuals versus linear predictor plot shows no strong systematic pattern, suggesting the model captures most of the structure in the data.
+  - The histogram of residuals is centered around zero and roughly symmetric.
+  - The response versus fitted plot demonstrates a strong positive relationship between predicted and observed counts, indicating good model fit.
+
++ The GAM basis dimension checks also indicate that the smoothing basis sizes were appropriate. 
+  - The k-index values were all close to 1 with non-significant p-values, suggesting that the chosen smooth complexity was adequate and that the model is not underfitting the nonlinear relationships. 
+
+**Overall:** The GAM results show that weather conditions and seasonal factors play a major role in daily bike-share usage. Temperature has the strongest nonlinear influence, while humidity and windspeed also meaningfully affect demand. 
+
+By allowing flexible nonlinear relationships, the GAM provides a better representation of how environmental conditions influence ridership patterns.
+
+# Final model
+
+```{r model-performance-2011, message=FALSE, warning=FALSE}
+
+# 2011 fitted values
+ridge_pred_2011 <- as.vector(predict(ridge_model, newx = x_train))
+lasso_pred_2011 <- as.vector(predict(lasso_model, newx = x_train))
+pcr_pred_2011   <- as.vector(predict(pcr_model, newdata = bikes_2011, ncomp = 5))
+pls_pred_2011   <- as.vector(predict(pls_model, newdata = bikes_2011, ncomp = 5))
+gam_pred_2011   <- as.vector(predict(gam_model, newdata = bikes_2011))
+
+# 2011 performance table
+model_perf_2011 <- data.frame(
+  Model = c("Ridge", "Lasso", "PCR", "PLS", "GAM"),
+  RMSE = c(
+    sqrt(mean((bikes_2011$cnt - ridge_pred_2011)^2)),
+    sqrt(mean((bikes_2011$cnt - lasso_pred_2011)^2)),
+    sqrt(mean((bikes_2011$cnt - pcr_pred_2011)^2)),
+    sqrt(mean((bikes_2011$cnt - pls_pred_2011)^2)),
+    sqrt(mean((bikes_2011$cnt - gam_pred_2011)^2))
+  ),
+  MAE = c(
+    mean(abs(bikes_2011$cnt - ridge_pred_2011)),
+    mean(abs(bikes_2011$cnt - lasso_pred_2011)),
+    mean(abs(bikes_2011$cnt - pcr_pred_2011)),
+    mean(abs(bikes_2011$cnt - pls_pred_2011)),
+    mean(abs(bikes_2011$cnt - gam_pred_2011))
+  ),
+  R2 = c(
+    1 - sum((bikes_2011$cnt - ridge_pred_2011)^2) / sum((bikes_2011$cnt - mean(bikes_2011$cnt))^2),
+    1 - sum((bikes_2011$cnt - lasso_pred_2011)^2) / sum((bikes_2011$cnt - mean(bikes_2011$cnt))^2),
+    1 - sum((bikes_2011$cnt - pcr_pred_2011)^2) / sum((bikes_2011$cnt - mean(bikes_2011$cnt))^2),
+    1 - sum((bikes_2011$cnt - pls_pred_2011)^2) / sum((bikes_2011$cnt - mean(bikes_2011$cnt))^2),
+    1 - sum((bikes_2011$cnt - gam_pred_2011)^2) / sum((bikes_2011$cnt - mean(bikes_2011$cnt))^2)
+  )
+)
+
+model_perf_2011_long <- model_perf_2011 %>%
+  pivot_longer(
+    cols = c(RMSE, MAE, R2),
+    names_to = "Metric",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Highlight = ifelse(Model == "PLS", "PLS", "Other"),
+    Model = factor(Model, levels = c("Ridge", "Lasso", "PCR", "PLS", "GAM"))
+  )
+
+ggplot(model_perf_2011_long, aes(x = Model, y = Value, fill = Highlight)) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  scale_fill_manual(values = c("PLS" = "#E3120B", "Other" = "grey70")) +
+  labs(
+    title = "2011 Model Performance Comparison",
+    x = "Model",
+    y = "Value"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist()
+```
+
+**Model selection**
+
++ Based on the results earlier, the best choice for prediction accuracy is Partial Least Squares:
+  - PLS demonstrated the lowest CV prediction error among the linear dimension-reduction approaches.
+  - Compared to PCR, PLS produced substantially lower prediction error with fewer components.
+  - Compared to ridge and lasso, PLS addressed the strong multicollinearity present among some predictors.
+  - The GAM model captured nonlinear relationships between weather variables and bike usage and showed strong in-sample fit.
+  However, because the primary goal of this phase of the project is prediction accuracy, the PLS model provides a simpler structure while still delivering strong predictive performance.
+  
+## Fit final model on 2012 data
+
+```{r}
+# Predict 2012 daily counts using the final PLS model
+
+# Replace 5 with the number of components you decided to use
+pls_pred_2012 <- predict(pls_model, newdata = bikes_2012, ncomp = 5)
+
+# Convert predictions to a numeric vector
+pls_pred_2012 <- as.vector(pls_pred_2012)
+
+# Test set performance metrics
+rmse_2012 <- sqrt(mean((bikes_2012$cnt - pls_pred_2012)^2))
+mae_2012  <- mean(abs(bikes_2012$cnt - pls_pred_2012))
+r2_2012   <- 1 - sum((bikes_2012$cnt - pls_pred_2012)^2) /
+  sum((bikes_2012$cnt - mean(bikes_2012$cnt))^2)
+
+c(RMSE = rmse_2012, MAE = mae_2012, R2 = r2_2012)
+```
+
+
+```{r}
+pls_df <- data.frame(
+  observed = bikes_2012$cnt,
+  predicted = pls_pred_2012
+)
+
+ggplot(pls_df, aes(x = observed, y = predicted)) +
+  geom_point(color = "#E3120B", alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    title = "PLS: Observed vs Predicted Counts (2012)",
+    x = "Observed cnt (2012)",
+    y = "Predicted cnt (2012)"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist()
+```
+
+
+```{r}
+# Predict 2012 daily counts using the final PCR model
+pcr_pred_2012 <- predict(pcr_model, newdata = bikes_2012, ncomp = 5)
+pcr_pred_2012 <- as.vector(pcr_pred_2012)
+
+combined_df <- data.frame(
+  observed = bikes_2012$cnt,
+  pls = pls_pred_2012,
+  pcr = pcr_pred_2012
+)
+
+ggplot(combined_df, aes(x = observed)) +
+  # PCR (grey)
+  geom_smooth(
+    aes(y = pcr, color = "PCR"),
+    method = "lm",
+    se = FALSE,
+    size = 1
+  ) +
+  # PLS (red)
+  geom_smooth(
+    aes(y = pls, color = "PLS"),
+    method = "lm",
+    se = FALSE,
+    size = 1
+  ) +
+  # Points (optional, but helpful)
+  geom_point(aes(y = pls), color = "#E3120B", alpha = 0.5) +
+  
+  scale_color_manual(
+    values = c("PLS" = "#E3120B", "PCR" = "grey50")
+  ) +
+  
+  labs(
+    title = "Performance of PCR and PLS (2012)",
+    x = "Observed cnt (2012)",
+    y = "Predicted cnt (2012)",
+    color = "Model"
+  ) +
+  
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(size = 10)
+  ) +
+  theme_economist()
+```
+
+**Comments**
+
++ The final PLS model was applied to the 2012 data to evaluate predictive performance on unseen observations.
+
++ The model produces the following performance metrics:
+  - RMSE: 2268.83
+  - MAE: 2094.70
+  - R2: -0.61
+
++ The observed vs predicted scatterplot shows a general positive relationship, indicating that the model captures the overall trend between predictons and bike usage.
+
++ Predictions are compressed relative to the observed values:
+  - High ridership days tend to be underpredicted.
+  - Low ridership days tend to be overpredicted.
+  
++ The negative R2 indicates that the model performs worse than a simple baseline model that predicts the mean daily ridership. 
+  - This suggets that the relationship learned from the 2011 dataset do not generalize well to the 2012 set, **as seen in phase 1**
+  
++ These results suggest that models trained on a single year of data may not generalize well when underlying demand patterns change. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
